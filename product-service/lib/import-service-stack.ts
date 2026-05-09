@@ -1,20 +1,25 @@
 import * as cdk from "aws-cdk-lib";
+import { Construct } from "constructs";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as apigateway from "aws-cdk-lib/aws-apigateway";
-import * as s3n from "aws-cdk-lib/aws-s3-notifications";
-import { NodejsFunction } from "aws-cdk-lib/aws-lambda-nodejs";
-import { Construct } from "constructs";
+import * as s3notifications from "aws-cdk-lib/aws-s3-notifications";
+import * as sqs from "aws-cdk-lib/aws-sqs";
 import * as path from "path";
+import { NodejsFunction } from "aws-cdk-lib/aws-lambda-nodejs";  
+
+interface ImportServiceStackProps extends cdk.StackProps {
+  catalogItemsQueue: sqs.Queue;
+}
 
 export class ImportServiceStack extends cdk.Stack {
-  constructor(scope: Construct, id: string, props?: cdk.StackProps) {
+  constructor(scope: Construct, id: string, props: ImportServiceStackProps) {
     super(scope, id, props);
 
-    // ==================== S3 Bucket ====================
+    const { catalogItemsQueue } = props;
 
-    const importBucket = new s3.Bucket(this, "ImportBucket", {
-      bucketName: "javlonbek-test-import-service-bucket", // Change this to something unique!
+    const bucket = new s3.Bucket(this, "ImportBucket", {
+      bucketName: "javlonbek-import-service-bucket-v2",
       removalPolicy: cdk.RemovalPolicy.DESTROY,
       autoDeleteObjects: true,
       cors: [
@@ -30,84 +35,60 @@ export class ImportServiceStack extends cdk.Stack {
       ],
     });
 
-    // ==================== Lambda Functions ====================
-
-    // Lambda: importProductsFile
-    const importProductsFile = new NodejsFunction(
-      this,
-      "ImportProductsFileFunction",
-      {
-        runtime: lambda.Runtime.NODEJS_20_X,
-        handler: "handler",
-        entry: path.join(__dirname, "../lambda/importProductsFile.ts"),
-        functionName: "importProductsFile",
-        environment: {
-          BUCKET_NAME: importBucket.bucketName,
-        },
-        bundling: {
-          forceDockerBundling: false,
-        },
-      }
-    );
-
-    // Lambda: importFileParser
-    const importFileParser = new NodejsFunction(
-      this,
-      "ImportFileParserFunction",
-      {
-        runtime: lambda.Runtime.NODEJS_20_X,
-        handler: "handler",
-        entry: path.join(__dirname, "../lambda/importFileParser.ts"),
-        functionName: "importFileParser",
-        environment: {
-          BUCKET_NAME: importBucket.bucketName,
-        },
-        bundling: {
-          forceDockerBundling: false,
-        },
-      }
-    );
-
-    // ==================== Permissions ====================
-
-    importBucket.grantReadWrite(importProductsFile);
-    importBucket.grantReadWrite(importFileParser);
-
-    // ==================== S3 Event Notification ====================
-
-    importBucket.addEventNotification(
-      s3.EventType.OBJECT_CREATED,
-      new s3n.LambdaDestination(importFileParser),
-      { prefix: "uploaded/" }
-    );
-
-    // ==================== API Gateway ====================
-
-    const api = new apigateway.RestApi(this, "ImportServiceApi", {
-      restApiName: "Import Service",
-      defaultCorsPreflightOptions: {
-        allowOrigins: apigateway.Cors.ALL_ORIGINS,
-        allowMethods: apigateway.Cors.ALL_METHODS,
-        allowHeaders: ["Content-Type"],
+    // importProductsFile Lambda
+    const importProductsFile = new NodejsFunction(this, "importProductsFile", {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: "handler",
+      entry: path.join(__dirname, "../lambda/importProductsFile.ts"), 
+      functionName: "importProductsFile",
+      environment: {
+        BUCKET_NAME: bucket.bucketName,
+      },
+      bundling: {
+        forceDockerBundling: false,
       },
     });
 
-    // GET /import
+    bucket.grantPut(importProductsFile);
+
+    // importFileParser Lambda
+    const importFileParser = new NodejsFunction(this, "importFileParser", {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: "handler",
+      entry: path.join(__dirname, "../lambda/importFileParser.ts"), 
+      functionName: "importFileParser",
+      environment: {
+        BUCKET_NAME: bucket.bucketName,
+        CATALOG_ITEMS_QUEUE_URL: catalogItemsQueue.queueUrl,
+      },
+      bundling: {
+        forceDockerBundling: false,
+      },
+    });
+
+    bucket.grantReadWrite(importFileParser);
+    catalogItemsQueue.grantSendMessages(importFileParser);
+
+    // S3 trigger for importFileParser
+    bucket.addEventNotification(
+      s3.EventType.OBJECT_CREATED,
+      new s3notifications.LambdaDestination(importFileParser),
+      { prefix: "uploaded/" }
+    );
+
+    // API Gateway
+    const api = new apigateway.RestApi(this, "ImportApi", {
+      restApiName: "Import Service",
+    });
+
     const importResource = api.root.addResource("import");
     importResource.addMethod(
       "GET",
-      new apigateway.LambdaIntegration(importProductsFile),
-      {
-        requestParameters: {
-          "method.request.querystring.name": true,
-        },
-      }
+      new apigateway.LambdaIntegration(importProductsFile)
     );
 
-    // Output the API URL
     new cdk.CfnOutput(this, "ImportApiUrl", {
-      value: api.url ?? "Something went wrong",
-      description: "Import Service API Gateway URL",
+      value: api.url,
     });
   }
 }

@@ -1,81 +1,56 @@
 import { S3Event } from "aws-lambda";
-import {
-  S3Client,
-  GetObjectCommand,
-  CopyObjectCommand,
-  DeleteObjectCommand,
-} from "@aws-sdk/client-s3";
+import { S3Client, GetObjectCommand, CopyObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
+import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
 import { Readable } from "stream";
-import csvParser from "csv-parser";
+import csv from "csv-parser";
 
-const s3Client = new S3Client({ region: process.env.AWS_REGION });
-const BUCKET_NAME = process.env.BUCKET_NAME as string;
+const s3Client = new S3Client({ region: "ap-southeast-2" });
+const sqsClient = new SQSClient({ region: "ap-southeast-2" });
 
-export const handler = async (event: S3Event): Promise<void> => {
-  console.log("importFileParser lambda invoked", JSON.stringify(event));
+export const handler = async (event: S3Event) => {
+  const bucket = event.Records[0].s3.bucket.name;
+  const key = decodeURIComponent(event.Records[0].s3.object.key.replace(/\+/g, " "));
 
-  for (const record of event.Records) {
-    const key = record.s3.object.key;
+  console.log(`Processing file: ${key} from bucket: ${bucket}`);
 
-    console.log(`Processing file: ${key}`);
+  const getObjectCommand = new GetObjectCommand({ Bucket: bucket, Key: key });
+  const response = await s3Client.send(getObjectCommand);
+  const stream = response.Body as Readable;
 
-    try {
-      // Get the file from S3
-      const getCommand = new GetObjectCommand({
-        Bucket: BUCKET_NAME,
-        Key: key,
-      });
+  await new Promise<void>((resolve, reject) => {
+    stream
+      .pipe(csv())
+      .on("data", async (record) => {
+        console.log("Sending record to SQS:", record);
 
-      const response = await s3Client.send(getCommand);
-
-      if (!response.Body) {
-        console.error("No body in response");
-        continue;
-      }
-
-      // Parse CSV
-      const stream = response.Body as Readable;
-
-      await new Promise<void>((resolve, reject) => {
-        stream
-          .pipe(csvParser())
-          .on("data", (data: Record<string, string>) => {
-            console.log("Parsed record:", JSON.stringify(data));
+        await sqsClient.send(
+          new SendMessageCommand({
+            QueueUrl: process.env.CATALOG_ITEMS_QUEUE_URL,
+            MessageBody: JSON.stringify(record),
           })
-          .on("end", () => {
-            console.log(`Finished parsing file: ${key}`);
-            resolve();
-          })
-          .on("error", (error: Error) => {
-            console.error("Error parsing CSV:", error);
-            reject(error);
-          });
-      });
+        );
+      })
+      .on("end", resolve)
+      .on("error", reject);
+  });
 
-      // Optional: Move file from uploaded/ to parsed/
-      const newKey = key.replace("uploaded/", "parsed/");
+  // Move file from uploaded/ to parsed/
+  const parsedKey = key.replace("uploaded/", "parsed/");
 
-      // Copy to parsed/
-      await s3Client.send(
-        new CopyObjectCommand({
-          Bucket: BUCKET_NAME,
-          CopySource: `${BUCKET_NAME}/${key}`,
-          Key: newKey,
-        })
-      );
+  await s3Client.send(
+    new CopyObjectCommand({
+      Bucket: bucket,
+      CopySource: `${bucket}/${key}`,
+      Key: parsedKey,
+    })
+  );
 
-      // Delete from uploaded/
-      await s3Client.send(
-        new DeleteObjectCommand({
-          Bucket: BUCKET_NAME,
-          Key: key,
-        })
-      );
+  await s3Client.send(
+    new DeleteObjectCommand({
+      Bucket: bucket,
+      Key: key,
+    })
+  );
 
-      console.log(`File moved from ${key} to ${newKey}`);
-    } catch (error) {
-      console.error(`Error processing file ${key}:`, error);
-      throw error;
-    }
-  }
+  console.log(`File moved from ${key} to ${parsedKey}`);
 };

@@ -1,19 +1,22 @@
 #!/usr/bin/env node
-import "source-map-support/register";
-import * as cdk from "aws-cdk-lib";
-import { ProductServiceStack } from "../lib/product-service-stack";
-import { ImportServiceStack } from "../lib/import-service-stack";
+import 'source-map-support/register';
+import * as cdk from 'aws-cdk-lib';
+import { ProductServiceStack } from '../lib/product-service-stack';
+import { ImportServiceStack } from '../lib/import-service-stack';
 
 const app = new cdk.App();
 
-new ProductServiceStack(app, "ProductServiceStack", {
+const productServiceStack = new ProductServiceStack(app, 'ProductServiceStack', {
   env: {
-    region: "ap-southeast-2",
+    account: process.env.CDK_DEFAULT_ACCOUNT,
+    region: 'ap-southeast-2',
   },
 });
 
-new ImportServiceStack(app, "ImportServiceStack", {
+new ImportServiceStack(app, 'ImportServiceStack', {
+  catalogItemsQueue: productServiceStack.catalogItemsQueue,
   env: {
-    region: "ap-southeast-2",
+    account: process.env.CDK_DEFAULT_ACCOUNT,
+    region: 'ap-southeast-2',
   },
 });
