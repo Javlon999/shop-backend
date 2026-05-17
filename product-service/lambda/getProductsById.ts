@@ -1,5 +1,9 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from "aws-lambda";
-import { products } from "./products";
+import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import { DynamoDBDocumentClient, GetCommand } from "@aws-sdk/lib-dynamodb";
+
+const client = new DynamoDBClient({ region: process.env.AWS_REGION });
+const docClient = DynamoDBDocumentClient.from(client);
 
 export const handler = async (
   event: APIGatewayProxyEvent
@@ -19,9 +23,15 @@ export const handler = async (
       };
     }
 
-    const product = products.find((p) => p.id === productId);
+    // Get product by ID
+    const productResult = await docClient.send(
+      new GetCommand({
+        TableName: process.env.PRODUCTS_TABLE,
+        Key: { id: productId },
+      })
+    );
 
-    if (!product) {
+    if (!productResult.Item) {
       return {
         statusCode: 404,
         headers: {
@@ -30,6 +40,20 @@ export const handler = async (
         body: JSON.stringify({ message: "Product not found" }),
       };
     }
+
+    // Get stock for this product
+    const stockResult = await docClient.send(
+      new GetCommand({
+        TableName: process.env.STOCK_TABLE,
+        Key: { product_id: productId },
+      })
+    );
+
+    // Join product with stock
+    const product = {
+      ...productResult.Item,
+      count: stockResult.Item?.count ?? 0,
+    };
 
     return {
       statusCode: 200,
@@ -41,6 +65,7 @@ export const handler = async (
       body: JSON.stringify(product),
     };
   } catch (error) {
+    console.error("Error:", error);
     return {
       statusCode: 500,
       headers: {
