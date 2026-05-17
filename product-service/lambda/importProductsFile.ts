@@ -6,7 +6,7 @@ const s3Client = new S3Client({ region: process.env.AWS_REGION });
 const BUCKET_NAME = process.env.BUCKET_NAME as string;
 
 export const handler = async (
-  event: APIGatewayProxyEvent
+  event: APIGatewayProxyEvent,
 ): Promise<APIGatewayProxyResult> => {
   console.log("importProductsFile lambda invoked", JSON.stringify(event));
 
@@ -18,8 +18,13 @@ export const handler = async (
         statusCode: 400,
         headers: {
           "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Methods": "GET, OPTIONS",
+          "Access-Control-Allow-Headers":
+            "Content-Type, Authorization, X-Amz-Date, X-Api-Key, X-Amz-Security-Token",
         },
-        body: JSON.stringify({ message: "File name is required. Use ?name=filename.csv" }),
+        body: JSON.stringify({
+          message: "File name is required. Use ?name=filename.csv",
+        }),
       };
     }
 
@@ -37,17 +42,22 @@ export const handler = async (
       statusCode: 200,
       headers: {
         "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET",
-        "Access-Control-Allow-Headers": "Content-Type",
+        "Access-Control-Allow-Methods": "GET, OPTIONS",
+        "Access-Control-Allow-Headers":
+          "Content-Type, Authorization, X-Amz-Date, X-Api-Key, X-Amz-Security-Token",
       },
       body: signedUrl,
     };
   } catch (error) {
     console.error("Error:", error);
+    // 500 response
     return {
       statusCode: 500,
       headers: {
         "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, OPTIONS",
+        "Access-Control-Allow-Headers":
+          "Content-Type, Authorization, X-Amz-Date, X-Api-Key, X-Amz-Security-Token",
       },
       body: JSON.stringify({ message: "Internal server error" }),
     };

@@ -26,7 +26,7 @@ export class ImportServiceStack extends cdk.Stack {
       "BasicAuthorizerLambda",
       {
         functionArn: basicAuthorizerArn,
-        sameEnvironment: true, 
+        sameEnvironment: true,
       },
     );
 
@@ -91,7 +91,14 @@ export class ImportServiceStack extends cdk.Stack {
       defaultCorsPreflightOptions: {
         allowOrigins: apigateway.Cors.ALL_ORIGINS,
         allowMethods: apigateway.Cors.ALL_METHODS,
-        allowHeaders: ["Content-Type", "Authorization"],
+        allowHeaders: [
+          "Content-Type",
+          "X-Amz-Date",
+          "Authorization",
+          "X-Api-Key",
+          "X-Amz-Security-Token",
+          "X-Amz-User-Agent",
+        ],
       },
     });
 
